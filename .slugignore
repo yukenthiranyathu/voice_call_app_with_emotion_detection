@@ -1,31 +1,33 @@
-# Ignore local environment files
-.env
-.venv/
-venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.db
+*.sqlite3
+*.log
+*.csv
+*.tmp
+*.DS_Store
+*.git/
+*.gitignore
 
-# Ignore local development files
+# Ignore Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+
+# Ignore local environment files
+.env
+*.env
+
+# Ignore version control files
 .git/
 .gitignore
-.DS_Store
-node_modules/
-*.log
 
-# Ignore data files
+# Ignore datasets or large files that aren't needed for production
 data/
-datasets/
-
-# Heres a comment
-*.psd
-*.pdf
-/test
-/spec
-
-.git/
-tests/
-docs/
-node_modules/
-*.md
+assets/
