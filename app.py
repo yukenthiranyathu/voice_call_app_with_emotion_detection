@@ -3,8 +3,12 @@ import librosa
 import tensorflow as tf
 from pydub import AudioSegment
 from pydub.silence import split_on_silence
+from flask import Flask, request, jsonify
 import tempfile
 import os
+from collections import Counter
+
+app = Flask(__name__)
 
 # Load the TensorFlow Lite model
 def load_tflite_model(tflite_model_path):
@@ -14,100 +18,66 @@ def load_tflite_model(tflite_model_path):
 
 # Function to extract MFCC features from an audio file
 def extract_mfcc(file_path):
-    try:
-        audio, sr = librosa.load(file_path, duration=3, offset=0.5)
-        mfcc = np.mean(librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=40).T, axis=0)
-        return mfcc.reshape(1, -1, 1).astype(np.float32)  # Convert to float32 for TFLite model
-    except Exception as e:
-        raise ValueError(f"Error extracting features from {file_path}: {e}")
+    audio, sr = librosa.load(file_path, duration=3, offset=0.5)
+    mfcc = np.mean(librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=40).T, axis=0)
+    return mfcc.reshape(1, -1, 1).astype(np.float32)
 
 # Function to predict emotion using the TensorFlow Lite model
 def predict_emotion_tflite(interpreter, file_path):
-    try:
-        # Extract MFCC features
-        features = extract_mfcc(file_path)
+    features = extract_mfcc(file_path)
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    interpreter.set_tensor(input_details[0]['index'], features)
+    interpreter.invoke()
+    predictions = interpreter.get_tensor(output_details[0]['index'])
+    predicted_class_index = np.argmax(predictions)
+    emotion_labels = ['Angry', 'Happy', 'Neutral', 'Sad']
+    predicted_emotion = emotion_labels[predicted_class_index]
+    return predicted_emotion
 
-        # Get input and output tensors
-        input_details = interpreter.get_input_details()
-        output_details = interpreter.get_output_details()
-
-        # Set the input tensor
-        interpreter.set_tensor(input_details[0]['index'], features)
-
-        # Run inference
-        interpreter.invoke()
-
-        # Get the output (predictions)
-        predictions = interpreter.get_tensor(output_details[0]['index'])
-
-        # Get the predicted class index
-        predicted_class_index = np.argmax(predictions)
-
-        # Assuming you have 4 emotions (update labels as needed)
-        emotion_labels = ['Angry', 'Happy', 'Neutral', 'Sad']  # Update based on your labels
-        predicted_emotion = emotion_labels[predicted_class_index]
-
-        return predicted_emotion
-    except Exception as e:
-        raise ValueError(f"Failed to predict emotion: {e}")
-
-# Function to calculate the average frequency of an audio segment
-def calculate_average_frequency(audio_segment):
-    samples = np.array(audio_segment.get_array_of_samples())
-    
-    # If stereo, take only one channel
-    if audio_segment.channels == 2:
-        samples = samples[::2]
-
-    sample_rate = audio_segment.frame_rate
-    
-    # Perform FFT to get frequencies
-    fft_result = np.fft.fft(samples)
-    frequencies = np.fft.fftfreq(len(fft_result), d=1/sample_rate)
-    magnitudes = np.abs(fft_result)
-
-    # Calculate average frequency of the signal
-    average_frequency = np.sum(frequencies * magnitudes) / np.sum(magnitudes)
-    
-    return average_frequency
-
-# Function to process audio, split into chunks, and predict emotion
+# Function to process audio, split into chunks, and predict emotions
 def process_audio(interpreter, file_path):
     sound = AudioSegment.from_file(file_path)  # Load any audio format
     
     # Split audio into chunks based on silence
     audio_chunks = split_on_silence(sound, min_silence_len=500, silence_thresh=-40)
-    
-    # Find the chunk with the maximum duration
-    max_chunk = max(audio_chunks, key=lambda chunk: len(chunk))
 
-    # Calculate the average frequency of the chunk
-    average_frequency = calculate_average_frequency(max_chunk)
+    # Collect predicted emotions for each chunk
+    emotions = []
+    for chunk in audio_chunks:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
+            chunk.export(temp_wav.name, format="wav")  # Export chunk to temporary WAV file
+            predicted_emotion = predict_emotion_tflite(interpreter, temp_wav.name)
+            emotions.append(predicted_emotion)
 
-    # Save the chunk to a temporary file in .wav format for MFCC extraction
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
-        max_chunk.export(temp_wav.name, format="wav")
-        
-        # Predict emotion from the chunk with the maximum duration
-        predicted_emotion = predict_emotion_tflite(interpreter, temp_wav.name)
+        # Clean up the temporary file
+        os.remove(temp_wav.name)
 
-    # Clean up the temporary file
-    os.remove(temp_wav.name)
+    # Find the most common emotion
+    most_common_emotion = Counter(emotions).most_common(1)
+    if most_common_emotion:
+        return most_common_emotion[0][0]  # Return the most common emotion
 
-    return predicted_emotion,
+    return None  # Return None if no emotions were predicted
+
+@app.route('/process_audio', methods=['POST'])
+def handle_process_audio():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        file.save(temp_file.name)
+        tflite_model_path = 'assets/speech_emotion_model.tflite'  # Update path if necessary
+        interpreter = load_tflite_model(tflite_model_path)
+
+        # Process the audio and get the most frequent emotion
+        predicted_emotion = process_audio(interpreter, temp_file.name)
+
+    os.remove(temp_file.name)
+    return jsonify({"emotion": predicted_emotion})
 
 if __name__ == "__main__":
-    import sys
-
-    # Get the audio file path from the command line argument
-    audio_file_path = sys.argv[1]
-
-    # Load your TFLite model (make sure to set the correct path)
-    tflite_model_path = 'assets/speech_emotion_model.tflite'  # Update this with the actual path to your TFLite model
-    interpreter = load_tflite_model(tflite_model_path)
-
-    # Process the audio and get the predicted emotion and average frequency
-    predicted_emotion = process_audio(interpreter, audio_file_path)
-
-    # Print the predicted emotion and average frequency (output for Flutter app)
-    print(f"Predicted Emotion: {predicted_emotion}")
+    app.run(host='0.0.0.0', port=5000)
