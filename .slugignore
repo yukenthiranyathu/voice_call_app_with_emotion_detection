@@ -17,3 +17,9 @@ node_modules/
 # Ignore data files
 data/
 datasets/
+
+# Heres a comment
+*.psd
+*.pdf
+/test
+/spec
