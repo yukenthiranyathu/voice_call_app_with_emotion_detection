@@ -1,0 +1,19 @@
+# Ignore local environment files
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore local development files
+.git/
+.gitignore
+.DS_Store
+node_modules/
+*.log
+
+# Ignore data files
+data/
+datasets/
