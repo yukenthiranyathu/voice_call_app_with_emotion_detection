@@ -23,3 +23,9 @@ datasets/
 *.pdf
 /test
 /spec
+
+.git/
+tests/
+docs/
+node_modules/
+*.md
